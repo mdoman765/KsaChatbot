@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 namespace crud_app_backend.Bot.Models
 {
     /// <summary>
-    /// Full session state for one UAE bot user.
+    /// Full session state for one KSA bot user.
     /// Serialised to JSON and stored in dbo.WhatsAppSessions.TempData.
     /// </summary>
     public class UaeSession
@@ -26,8 +26,8 @@ namespace crud_app_backend.Bot.Models
         public List<string> MediaVoices { get; set; } = new();
 
         // ── Language helper ───────────────────────────────────────────────────
-        public string T(string en, string bn, string ta, string zh, string ms)
-            => Lang switch { "bn" => bn, "ta" => ta, "zh" => zh, "ms" => ms, _ => en };
+        public string T(string en, string bn, string ar)
+            => Lang switch { "bn" => bn, "ar" => ar, _ => en };
 
         public string T(string en, string bn)
             => Lang == "bn" ? bn : en;

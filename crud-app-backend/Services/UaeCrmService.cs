@@ -4,7 +4,7 @@ using System.Text.Json;
 namespace crud_app_backend.Bot.Services
 {
     /// <summary>
-    /// Submits UAE chatbot tickets to CRM via multipart/form-data.
+    /// Submits KSA chatbot tickets to CRM via multipart/form-data.
     /// Sends actual file BYTES (not URLs) — same approach as old WhatsAppComplaintService.
     ///
     /// POST crm.prangroup.com/api/whats-app/sales-support/v1/create-uae-ticket
@@ -53,7 +53,7 @@ namespace crud_app_backend.Bot.Services
                 Text("description", req.Description ?? "");
                 Text("location", req.Location);
                 Text("cartItems", req.CartItems);
-                Text("ticket_category", "Malaysia_Chatbot");
+                Text("ticket_category", "KSA_Chatbot");
                 Text("ticket_type", req.TicketType);
 
                 // ── Voice files → voice_file[] (actual binary bytes) ──────────

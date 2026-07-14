@@ -15,14 +15,14 @@ builder.Services.AddDbContextPool<AppDbContext>(options =>
         builder.Configuration.GetConnectionString("DefaultConnection")),
     poolSize: 128);
 
-// ── Repositories (only what UAE bot needs) ────────────────────────────────────
+// ── Repositories (only what KSA bot needs) ────────────────────────────────────
 builder.Services.AddScoped<IWhatsAppSessionRepository, WhatsAppSessionRepository>();
 builder.Services.AddScoped<IWhatsAppMessageRepository, WhatsAppMessageRepository>();
 
 // ── Session service ───────────────────────────────────────────────────────────
 builder.Services.AddScoped<IWhatsAppSessionService, WhatsAppSessionService>();
 
-// ── UAE Bot services ──────────────────────────────────────────────────────────
+// ── KSA Bot services ──────────────────────────────────────────────────────────
 builder.Services.AddSingleton<BotStateService>();   // per-user locks + burst detection
 builder.Services.AddSingleton<WebhookQueue>();       // Channel for instant 200 OK
 builder.Services.AddScoped<IUaeBotService, UaeBotService>();
@@ -37,12 +37,13 @@ builder.Services.AddHostedService<KeepAliveService>();
 
 // ── HTTP clients ──────────────────────────────────────────────────────────────
 
-// 360dialog
-builder.Services.AddHttpClient("Dialog", client =>
+// Meta WhatsApp Cloud API
+builder.Services.AddHttpClient("Meta", client =>
 {
-    var key = builder.Configuration["Dialog:ApiKey"];
-    if (!string.IsNullOrWhiteSpace(key))
-        client.DefaultRequestHeaders.Add("D360-API-KEY", key);
+    var token = builder.Configuration["Meta:AccessToken"];
+    if (!string.IsNullOrWhiteSpace(token))
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
     client.Timeout = TimeSpan.FromSeconds(30);
 });
 

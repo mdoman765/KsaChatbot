@@ -61,7 +61,7 @@ namespace crud_app_backend.Bot.Services
                 var msg = UaeMessageParser.Parse(body);
                 if (msg is null) return;
 
-                _logger.LogInformation("[UAE] {Type} from {Phone} id={Id}",
+                _logger.LogInformation("[KSA] {Type} from {Phone} id={Id}",
                     msg.MsgType, msg.From, msg.MessageId);
 
                 var userLock = _state.UserLocks.GetOrAdd(msg.From, _ => new SemaphoreSlim(1, 1));
@@ -91,7 +91,7 @@ namespace crud_app_backend.Bot.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[UAE] ProcessAsync unhandled crash");
+                _logger.LogError(ex, "[KSA] ProcessAsync unhandled crash");
             }
         }
 
@@ -106,9 +106,7 @@ namespace crud_app_backend.Bot.Services
                 return s.T(
                     "🔍 Verifying shop...",
                     "🔍 শপ যাচাই করা হচ্ছে...",
-                    "🔍 கடையை சரிபார்க்கிறோம்...",
-                    "🔍 正在验证商店...",
-                    "🔍 Mengesahkan kedai...");
+                    "🔍 جارٍ التحقق من المتجر...");
 
             // ── Gallery burst suppression for ACK ──────────────────────────────
             if ((s.State == "AWAITING_RETURN_DETAILS" || s.State == "AWAITING_COMPLAINT_DETAILS"
@@ -126,34 +124,26 @@ namespace crud_app_backend.Bot.Services
                 return s.T(
                     "⏳ Uploading media...",
                     "⏳ মিডিয়া আপলোড হচ্ছে...",
-                    "⏳ மீடியா பதிவேற்றுகிறோம்...",
-                    "⏳ 正在上传媒体...",
-                    "⏳ Memuat naik media...");
+                    "⏳ جارٍ رفع الوسائط...");
             }
 
             if (s.State == "AWAITING_ORDER_CONFIRM" && msg.RawText == "y")
                 return s.T(
                     "⏳ Placing order...",
                     "⏳ অর্ডার দেওয়া হচ্ছে...",
-                    "⏳ ஆர்டர் செய்கிறோம்...",
-                    "⏳ 正在下单...",
-                    "⏳ Membuat pesanan...");
+                    "⏳ جارٍ تقديم الطلب...");
 
             if (s.State == "AWAITING_COMPLAINT_CONFIRM" && msg.RawText == "y")
                 return s.T(
                     "⏳ Submitting complaint...",
                     "⏳ অভিযোগ জমা হচ্ছে...",
-                    "⏳ புகாரை சமர்ப்பிக்கிறோம்...",
-                    "⏳ 正在提交投诉...",
-                    "⏳ Menghantar aduan...");
+                    "⏳ جارٍ إرسال الشكوى...");
 
             if (s.State == "AWAITING_RETURN_CONFIRM" && msg.RawText == "y")
                 return s.T(
                     "⏳ Submitting return request...",
                     "⏳ রিটার্ন জমা হচ্ছে...",
-                    "⏳ திரும்பப்பெறும் கோரிக்கையை சமர்ப்பிக்கிறோம்...",
-                    "⏳ 正在提交退货请求...",
-                    "⏳ Menghantar permintaan pemulangan...");
+                    "⏳ جارٍ إرسال طلب الإرجاع...");
 
             return null;
         }
@@ -166,17 +156,14 @@ namespace crud_app_backend.Bot.Services
         {
             "menu",
             "মেনু",
-            "மெனு",
-            "菜单",
+            "قائمة",
         };
 
         private static readonly HashSet<string> ResetKeywords = new(StringComparer.OrdinalIgnoreCase)
         {
             "hi", "hello", "start", "hey", "new",
             "হ্যালো", "শুরু",
-            "வணக்கம்", "தொடங்கு",
-            "你好", "开始",
-            "helo", "mula", "selamat",
+            "مرحبا", "ابدأ",
         };
 
         private async Task<string> RouteAsync(UaeSession s, UaeIncomingMessage msg)
@@ -187,10 +174,7 @@ namespace crud_app_backend.Bot.Services
             if (msg.MsgType == "order" && msg.CartItems.Count > 0)
                 return await HandleCartOrderAsync(s, msg);
 
-            // ── INIT or reset keywords: funnel ALL first messages through shop code handler ──
-            // Handles: QR scan (shop code), "hi/hello", or any unrecognised opening message.
-            // HandleShopCodeAsync treats non-shop-code text as an invalid code → ShopVerified=false
-            // → sends logo + LangPrompt. Either way the user always gets the language selection.
+            // ── INIT or reset keywords ────────────────────────────────────────
             if (s.State == "INIT" || (msg.MsgType == "text" && ResetKeywords.Contains(raw)))
             {
                 ResetSession(s);
@@ -198,10 +182,20 @@ namespace crud_app_backend.Bot.Services
                 return await HandleShopCodeAsync(s, msg);
             }
 
-            // ── menu keyword: available to ALL users once past shop/lang steps ──
+            // ── menu keyword ──────────────────────────────────────────────────
             if (msg.MsgType == "text" && MenuKeywords.Contains(raw)
                 && s.State != "AWAITING_SHOP_CODE" && s.State != "AWAITING_LANG")
                 return BuildMainMenu(s);
+
+            // ── "0" shortcut: change language (available after shop/lang steps) ──
+            if (msg.MsgType == "text" && raw == "0"
+                && s.State != "AWAITING_SHOP_CODE" && s.State != "AWAITING_LANG"
+                && s.State != "AWAITING_RETURN_DETAILS" && s.State != "AWAITING_COMPLAINT_DETAILS"
+                && s.State != "AWAITING_RETURN_CONFIRM" && s.State != "AWAITING_COMPLAINT_CONFIRM")
+            {
+                Transition(s, "AWAITING_LANG");
+                return LangPrompt();
+            }
 
             // ── "s" shortcut: verified users only ────────────────────────────
             if (s.ShopVerified && msg.MsgType == "text" && raw == "s")
@@ -232,11 +226,9 @@ namespace crud_app_backend.Bot.Services
             {
                 case "1": s.Lang = "en"; break;
                 case "2": s.Lang = "bn"; break;
-                case "3": s.Lang = "ta"; break;
-                case "4": s.Lang = "zh"; break;
-                case "5": s.Lang = "ms"; break;
+                case "3": s.Lang = "ar"; break;
                 default:
-                    return Task.FromResult("❌ Invalid. Reply *1*, *2*, *3*, *4* or *5*.\n\n" + LangPrompt());
+                    return Task.FromResult("❌ Invalid. Reply *1*, *2* or *3*.\n\n" + LangPrompt());
             }
 
             Transition(s, "MAIN_MENU");
@@ -244,9 +236,7 @@ namespace crud_app_backend.Bot.Services
             return Task.FromResult(s.T(
                 "✅ Language set to *English*.\n\n" + BuildMainMenuBody("en", v),
                 "✅ ভাষা বাংলায় সেট হয়েছে।\n\n" + BuildMainMenuBody("bn", v),
-                "✅ மொழி தமிழில் அமைக்கப்பட்டது.\n\n" + BuildMainMenuBody("ta", v),
-                "✅ 语言已设置为中文。\n\n" + BuildMainMenuBody("zh", v),
-                "✅ Bahasa ditetapkan kepada *Bahasa Melayu*.\n\n" + BuildMainMenuBody("ms", v)));
+                "✅ تم تعيين اللغة إلى *العربية*.\n\n" + BuildMainMenuBody("ar", v)));
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -263,13 +253,12 @@ namespace crud_app_backend.Bot.Services
             var logoUrl = $"{baseUrl}/images/pran-rfl-logo.jpg";
 
             // ── If the text is a greeting/reset keyword, skip validation entirely ──
-            // Just show the welcome + language prompt without an error message.
             if (ResetKeywords.Contains(code))
             {
                 s.ShopVerified = false;
                 s.ShopCode = string.Empty;
                 Transition(s, "AWAITING_LANG");
-                var greetMsg = "👋 Hi! Welcome to *PRAN-RFL Malaysia Sales Support*\n\n" +
+                var greetMsg = "👋 Hi! Welcome to *PRAN-RFL KSA Sales Support*\n\n" +
                                LangOptions();
                 await _dialog.SendImageAsync(msg.From, logoUrl, greetMsg);
                 return string.Empty;
@@ -320,7 +309,7 @@ namespace crud_app_backend.Bot.Services
             try
             {
                 var token = _config["Spror:BearerToken"] ?? "224|IEcNubBv4Z9LoXpngVuHthRrSDdIlD0B4RGxNFqT";
-                var contName = _config["Spror:ContName"] ?? "Malaysia";
+                var contName = _config["Spror:ContName"] ?? "Saudi Arabia";
                 var baseUrl = _config["Spror:BaseUrl"] ?? "https://spror.prgfms.com/api/v1";
 
                 var client = _httpFactory.CreateClient();
@@ -334,7 +323,7 @@ namespace crud_app_backend.Bot.Services
                 if (!resp.IsSuccessStatusCode) return null;
 
                 var json = await resp.Content.ReadAsStringAsync();
-                _logger.LogDebug("[UAE] ValidateShop response: {J}", json.Length > 200 ? json[..200] : json);
+                _logger.LogDebug("[KSA] ValidateShop response: {J}", json.Length > 200 ? json[..200] : json);
 
                 using var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
@@ -355,7 +344,7 @@ namespace crud_app_backend.Bot.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[UAE] ValidateShop failed for {Code}", shopCode);
+                _logger.LogError(ex, "[KSA] ValidateShop failed for {Code}", shopCode);
                 return null;
             }
         }
@@ -371,19 +360,23 @@ namespace crud_app_backend.Bot.Services
         }
 
         /// <summary>
-        /// Verified shops see: 1=Place Order  2=Connect with Agent
-        /// Unverified shops see: 1=Connect with Agent only
+        /// Verified shops see:   1=Place Order  2=Connect with Agent  0=Change Language
+        /// Unverified shops see: 1=Connect with Agent  0=Change Language
         /// </summary>
         private static string BuildMainMenuBody(string lang, bool shopVerified = true)
         {
-            // ── Unverified: only agent option ─────────────────────────────────
+            // ── Unverified: only agent option + language change ────────────────
             if (!shopVerified) return lang switch
             {
-                "bn" => "1️⃣  সাপোর্ট এজেন্ট\n\n👉 *1* পাঠান।",
-                "ta" => "1️⃣  ஆதரவு முகவர்\n\n👉 *1* அனுப்பவும்.",
-                "zh" => "1️⃣  联系客服\n\n👉 请发送 *1*。",
-                "ms" => "1️⃣  Hubungi Ejen Sokongan\n\n👉 Balas *1*.",
-                _ => "1️⃣  Connect with Agent\n\n👉 Reply *1*.",
+                "bn" => "1️⃣  সাপোর্ট এজেন্ট\n" +
+                        "0️⃣  ভাষা পরিবর্তন করুন\n\n" +
+                        "👉 *1* বা *0* পাঠান।",
+                "ar" => "1️⃣  تواصل مع الوكيل\n" +
+                        "0️⃣  تغيير اللغة\n\n" +
+                        "👉 أرسل *1* أو *0*.",
+                _ => "1️⃣  Connect with Agent\n" +
+                        "0️⃣  Change Language\n\n" +
+                        "👉 Reply *1* or *0*.",
             };
 
             // ── Verified: full menu ───────────────────────────────────────────
@@ -391,31 +384,26 @@ namespace crud_app_backend.Bot.Services
             {
                 "bn" =>
                     "1️⃣  অর্ডার দিন\n" +
-                    "2️⃣  সাপোর্ট এজেন্ট\n\n" +
-                    "👉 *1* বা *2* পাঠান।",
-                "ta" =>
-                    "1️⃣  ஆர்டர் செய்யுங்கள்\n" +
-                    "2️⃣  ஆதரவு முகவர்\n\n" +
-                    "👉 *1* அல்லது *2* அனுப்பவும்.",
-                "zh" =>
-                    "1️⃣  下单\n" +
-                    "2️⃣  联系客服\n\n" +
-                    "👉 请发送 *1* 或 *2*。",
-                "ms" =>
-                    "1️⃣  Buat Pesanan\n" +
-                    "2️⃣  Hubungi Ejen Sokongan\n\n" +
-                    "👉 Balas *1* atau *2*.",
+                    "2️⃣  সাপোর্ট এজেন্ট\n" +
+                    "0️⃣  ভাষা পরিবর্তন করুন\n\n" +
+                    "👉 *1*, *2* বা *0* পাঠান।",
+                "ar" =>
+                    "1️⃣  تقديم طلب\n" +
+                    "2️⃣  تواصل مع الوكيل\n" +
+                    "0️⃣  تغيير اللغة\n\n" +
+                    "👉 أرسل *1* أو *2* أو *0*.",
                 _ =>
                     "1️⃣  Place Order\n" +
-                    "2️⃣  Connect with Agent\n\n" +
-                    "👉 Reply *1* or *2*.",
+                    "2️⃣  Connect with Agent\n" +
+                    "0️⃣  Change Language\n\n" +
+                    "👉 Reply *1*, *2* or *0*.",
             };
         }
 
         /// <summary>
         /// Routes MAIN_MENU input.
-        /// Verified:   1 = Place Order (URL),  2 = Connect Agent (immediate ticket)
-        /// Unverified: 1 = Connect Agent (immediate ticket)
+        /// Verified:   1 = Place Order,  2 = Connect Agent,  0 = Change Language
+        /// Unverified: 1 = Connect Agent,                    0 = Change Language
         /// </summary>
         private Task<string> HandleMainMenu(UaeSession s, UaeIncomingMessage msg)
         {
@@ -423,6 +411,13 @@ namespace crud_app_backend.Bot.Services
 
             // Re-display menu for any menu keyword (safety net)
             if (MenuKeywords.Contains(msg.RawText)) return Task.FromResult(BuildMainMenu(s));
+
+            // 0 = Change Language
+            if (msg.RawText == "0")
+            {
+                Transition(s, "AWAITING_LANG");
+                return Task.FromResult(LangPrompt());
+            }
 
             if (!s.ShopVerified)
             {
@@ -443,20 +438,14 @@ namespace crud_app_backend.Bot.Services
         {
             Transition(s, "MAIN_MENU");
             return s.T(
-                $"🌐 *Place your order on our website:*\nhttps://myorder.prangroup.com/?cont_id=14&order=1&shopCode={s.ShopCode}\n\n" +
+                $"🌐 *Place your order on our website:*\nhttps://myorder.prangroup.com/?cont_id=15&order=1&shopCode={s.ShopCode}\n\n" +
                 "👉 Send *menu* for Main Menu",
 
-                $"🌐 *আমাদের ওয়েবসাইটে অর্ডার করুন:*\nhttps://myorder.prangroup.com/?cont_id=14&order=1&shopCode={s.ShopCode}\n\n" +
+                $"🌐 *আমাদের ওয়েবসাইটে অর্ডার করুন:*\nhttps://myorder.prangroup.com/?cont_id=15&order=1&shopCode={s.ShopCode}\n\n" +
                 "👉 *মেনু* — মূল মেনু",
 
-                $"🌐 *எங்கள் இணையதளத்தில் ஆர்டர் செய்யுங்கள்:*\nhttps://myorder.prangroup.com/?cont_id=14&order=1&shopCode={s.ShopCode}\n\n" +
-                "👉 *மெனு* — முகப்பு மெனு",
-
-                $"🌐 *请在我们的网站上下单：*\nhttps://myorder.prangroup.com/?cont_id=14&order=1&shopCode={s.ShopCode}\n\n" +
-                "👉 *menu* — 主菜单",
-
-                $"🌐 *Buat pesanan anda di laman web kami:*\nhttps://myorder.prangroup.com/?cont_id=14&order=1&shopCode={s.ShopCode}\n\n" +
-                "👉 *menu* — Menu Utama");
+                $"🌐 *قدّم طلبك عبر موقعنا الإلكتروني:*\nhttps://myorder.prangroup.com/?cont_id=15&order=1&shopCode={s.ShopCode}\n\n" +
+                "👉 أرسل *قائمة* للقائمة الرئيسية");
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -466,7 +455,7 @@ namespace crud_app_backend.Bot.Services
         private async Task<string> HandleCartOrderAsync(UaeSession s, UaeIncomingMessage msg)
         {
             _logger.LogInformation(
-                "[UAE] Cart order from {Phone} — {Count} items, catalogId={Cat}",
+                "[KSA] Cart order from {Phone} — {Count} items, catalogId={Cat}",
                 msg.From, msg.CartItems.Count, msg.OrderCatalogId);
 
             var nameMap = await _catalog.GetAllNamesAsync();
@@ -481,7 +470,7 @@ namespace crud_app_backend.Bot.Services
                 .ToList();
 
             var total = msg.CartItems.Sum(i => i.Price * i.Qty);
-            var currency = msg.CartItems.FirstOrDefault()?.Currency ?? "MYR";
+            var currency = msg.CartItems.FirstOrDefault()?.Currency ?? "SAR";
 
             var totalLine = total > 0
                 ? $"\n\n*Total: {total:F2} {currency}*"
@@ -522,35 +511,19 @@ namespace crud_app_backend.Bot.Services
                     "আমাদের টিম শীঘ্রই আপনার অর্ডার নিশ্চিত করবে।\n\n" +
                     "👉 *মেনু* — মূল মেনু",
 
-                    $"✅ *ஆர்டர் பெறப்பட்டது!*\n\n" +
+                    $"✅ *تم استلام طلبك!*\n\n" +
                     $"{itemSummary}{totalLine}\n\n" +
-                    (result.TicketId != null ? $"டிக்கெட் ஐடி: *{result.TicketId}*\n\n" : "") +
-                    "எங்கள் குழு விரைவில் உங்கள் ஆர்டரை உறுதிப்படுத்தும்.\n\n" +
-                    "👉 *மெனு* — முகப்பு மெனு",
-
-                    $"✅ *订单已收到！*\n\n" +
-                    $"{itemSummary}{totalLine}\n\n" +
-                    (result.TicketId != null ? $"工单 ID：*{result.TicketId}*\n\n" : "") +
-                    "我们的团队将尽快确认您的订单。\n\n" +
-                    "👉 *menu* — 主菜单",
-
-                    $"✅ *Pesanan Diterima!*\n\n" +
-                    $"{itemSummary}{totalLine}\n\n" +
-                    (result.TicketId != null ? $"ID Tiket: *{result.TicketId}*\n\n" : "") +
-                    "Pasukan kami akan mengesahkan pesanan anda tidak lama lagi.\n\n" +
-                    "👉 Hantar *menu* untuk Menu Utama")
+                    (result.TicketId != null ? $"رقم التذكرة: *{result.TicketId}*\n\n" : "") +
+                    "سيقوم فريقنا بتأكيد طلبك قريبًا.\n\n" +
+                    "👉 أرسل *قائمة* للقائمة الرئيسية")
 
                 : s.T(
                     $"❌ *Could not save your order.*\n{result.Error}\n\n" +
                     "Please try again or send *S* to reach a support agent.",
                     $"❌ *অর্ডার সেভ করা যায়নি।*\n{result.Error}\n\n" +
                     "আবার চেষ্টা করুন বা *S* পাঠিয়ে এজেন্টের সাথে যোগাযোগ করুন।",
-                    $"❌ *ஆர்டரை சேமிக்க முடியவில்லை.*\n{result.Error}\n\n" +
-                    "மீண்டும் முயற்சிக்கவும் அல்லது முகவருக்கு *S* அனுப்பவும்.",
-                    $"❌ *无法保存您的订单。*\n{result.Error}\n\n" +
-                    "请重试或发送 *S* 联系客服。",
-                    $"❌ *Pesanan tidak dapat disimpan.*\n{result.Error}\n\n" +
-                    "Sila cuba lagi atau hantar *S* untuk hubungi ejen.");
+                    $"❌ *تعذّر حفظ طلبك.*\n{result.Error}\n\n" +
+                    "يرجى المحاولة مرة أخرى أو إرسال *S* للتواصل مع الدعم.");
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -572,20 +545,10 @@ namespace crud_app_backend.Bot.Services
                 "*টেক্সট*, *ছবি* বা *ভয়েস* পাঠান\n\n" +
                 "👉 মূল মেনুতে ফিরতে *0* পাঠান",
 
-                "🔄 *திரும்பப்பெறுதல் / மாற்றீடு*\n\n" +
-                "திரும்பப்பெற விரும்பும் தயாரிப்பை எங்களிடம் தெரிவிக்கவும்.\n\n" +
-                "*உரை*, *படம்* அல்லது *குரல்* அனுப்பவும்\n\n" +
-                "👉 முகப்பு மெனுவிற்கு *0* அனுப்பவும்",
-
-                "🔄 *退货 / 换货*\n\n" +
-                "请告诉我们您想退回的产品。\n\n" +
-                "发送*文字*、*图片*或*语音*\n\n" +
-                "👉 发送 *0* 返回主菜单",
-
-                "🔄 *Pemulangan / Penggantian*\n\n" +
-                "Beritahu kami produk yang ingin anda pulangkan.\n\n" +
-                "Hantar *Teks*, *Gambar*, atau *Suara*\n\n" +
-                "👉 Hantar *0* untuk kembali ke menu utama");
+                "🔄 *إرجاع / استبدال*\n\n" +
+                "أخبرنا بالمنتج الذي تريد إرجاعه.\n\n" +
+                "أرسل *نصًا* أو *صورة* أو *صوتًا*\n\n" +
+                "👉 أرسل *0* للعودة إلى القائمة الرئيسية");
         }
 
         private async Task<string> HandleReturnConfirmAsync(UaeSession s, UaeIncomingMessage msg)
@@ -615,20 +578,10 @@ namespace crud_app_backend.Bot.Services
                 "*টেক্সট*, *ছবি* বা *ভয়েস* পাঠান\n\n" +
                 "👉 মূল মেনুতে ফিরতে *0* পাঠান",
 
-                "📝 *புகார் / கருத்து*\n\n" +
-                "உங்கள் சிக்கலை எங்களிடம் தெரிவிக்கவும்.\n\n" +
-                "*உரை*, *படம்* அல்லது *குரல்* அனுப்பவும்\n\n" +
-                "👉 முகப்பு மெனுவிற்கு *0* அனுப்பவும்",
-
-                "📝 *投诉 / 反馈*\n\n" +
-                "请告诉我们您的问题。\n\n" +
-                "发送*文字*、*图片*或*语音*\n\n" +
-                "👉 发送 *0* 返回主菜单",
-
-                "📝 *Aduan / Maklum Balas*\n\n" +
-                "Beritahu kami masalah anda.\n\n" +
-                "Hantar *Teks*, *Gambar*, atau *Suara*\n\n" +
-                "👉 Hantar *0* untuk kembali ke menu utama");
+                "📝 *شكوى / ملاحظات*\n\n" +
+                "أخبرنا بمشكلتك.\n\n" +
+                "أرسل *نصًا* أو *صورة* أو *صوتًا*\n\n" +
+                "👉 أرسل *0* للعودة إلى القائمة الرئيسية");
         }
 
         private async Task<string> HandleComplaintConfirmAsync(UaeSession s, UaeIncomingMessage msg)
@@ -669,9 +622,7 @@ namespace crud_app_backend.Bot.Services
                     return s.T(
                         "⚠️ Image could not be uploaded. Please try again.",
                         "⚠️ ছবি আপলোড হয়নি। আবার পাঠান।",
-                        "⚠️ படம் பதிவேற்ற முடியவில்லை. மீண்டும் முயற்சிக்கவும்.",
-                        "⚠️ 图片上传失败，请重试。",
-                        "⚠️ Gambar tidak dapat dimuat naik. Sila cuba lagi.");
+                        "⚠️ تعذّر رفع الصورة. يرجى المحاولة مرة أخرى.");
 
                 // Confirm-message burst suppression
                 {
@@ -696,9 +647,7 @@ namespace crud_app_backend.Bot.Services
                     return s.T(
                         "⚠️ Voice note could not be uploaded. Please try again.",
                         "⚠️ ভয়েস আপলোড হয়নি। আবার পাঠান।",
-                        "⚠️ குரல் குறிப்பு பதிவேற்ற முடியவில்லை. மீண்டும் முயற்சிக்கவும்.",
-                        "⚠️ 语音消息上传失败，请重试。",
-                        "⚠️ Nota suara tidak dapat dimuat naik. Sila cuba lagi.");
+                        "⚠️ تعذّر رفع الرسالة الصوتية. يرجى المحاولة مرة أخرى.");
             }
             else
             {
@@ -714,14 +663,8 @@ namespace crud_app_backend.Bot.Services
                 "✅ *পাওয়া গেছে।*\n\n" +
                 "অনুরোধ সম্পন্ন করতে *Y* পাঠান অথবা আরও তথ্য যোগ করতে *ছবি*, *ভয়েস* বা *টেক্সট* পাঠান",
 
-                "✅ *பெறப்பட்டது.*\n\n" +
-                "கோரிக்கையை முடிக்க *Y* அனுப்பவும் அல்லது மேலும் விவரங்களைச் சேர்க்க மற்றொரு *படம்*, *குரல்* அல்லது *உரை* அனுப்பவும்",
-
-                "✅ *已收到。*\n\n" +
-                "发送 *Y* 完成请求，或发送更多 *图片*、*语音* 或 *文字* 以补充详细信息",
-
-                "✅ *Diterima.*\n\n" +
-                "Hantar *Y* untuk melengkapkan permintaan atau hantar *Gambar*, *Suara* atau *Teks* lain untuk menambah maklumat");
+                "✅ *تم الاستلام.*\n\n" +
+                "أرسل *Y* لإتمام الطلب أو أرسل *صورة* أو *صوتًا* أو *نصًا* آخر لإضافة مزيد من التفاصيل");
         }
 
         private async Task<string> SubmitMediaAsync(UaeSession s, string ticketType)
@@ -744,13 +687,11 @@ namespace crud_app_backend.Bot.Services
                 return s.T(
                     $"❌ Submission failed.\n{result.Error}\n\nSend *Y* to retry.",
                     $"❌ জমা ব্যর্থ।\n{result.Error}",
-                    $"❌ சமர்ப்பிப்பு தோல்வி.\n{result.Error}",
-                    $"❌ 提交失败。\n{result.Error}",
-                    $"❌ Penghantaran gagal.\n{result.Error}\n\nHantar *Y* untuk cuba semula.");
+                    $"❌ فشل الإرسال.\n{result.Error}\n\nأرسل *Y* للمحاولة مرة أخرى.");
 
             var ticketLabel = ticketType == "PRODUCT_REPLACEMENT"
-                ? s.T("Return Request", "রিটার্ন রিকোয়েস্ট", "திரும்பப்பெறும் கோரிக்கை", "退货请求", "Permintaan Pemulangan")
-                : s.T("Complaint", "অভিযোগ", "புகார்", "投诉", "Aduan");
+                ? s.T("Return Request", "রিটার্ন রিকোয়েস্ট", "طلب الإرجاع")
+                : s.T("Complaint", "অভিযোগ", "الشكوى");
 
             return s.T(
                 $"✅ *{ticketLabel} Submitted*\n\n" +
@@ -763,20 +704,10 @@ namespace crud_app_backend.Bot.Services
                 "আমাদের টিম শীঘ্রই যোগাযোগ করবে।\n\n" +
                 "👉 *মেনু* — মূল মেনু\n",
 
-                $"✅ *{ticketLabel} சமர்ப்பிக்கப்பட்டது*\n\n" +
-                (result.TicketId != null ? $"டிக்கெட் ஐடி : *{result.TicketId}*\n\n" : "") +
-                "எங்கள் குழு விரைவில் தொடர்பு கொள்ளும்.\n\n" +
-                "👉 *மெனு* — முகப்பு மெனு\n",
-
-                $"✅ *{ticketLabel} 已提交*\n\n" +
-                (result.TicketId != null ? $"工单 ID：*{result.TicketId}*\n\n" : "") +
-                "我们的团队将尽快与您联系。\n\n" +
-                "👉 *菜单* — 主菜单\n",
-
-                $"✅ *{ticketLabel} Dihantar*\n\n" +
-                (result.TicketId != null ? $"ID Tiket : *{result.TicketId}*\n\n" : "") +
-                "Pasukan kami akan menghubungi anda tidak lama lagi.\n\n" +
-                "👉 Hantar *menu* untuk Menu Utama\n");
+                $"✅ *تم إرسال {ticketLabel}*\n\n" +
+                (result.TicketId != null ? $"رقم التذكرة : *{result.TicketId}*\n\n" : "") +
+                "سيتواصل معك فريقنا قريبًا.\n\n" +
+                "👉 أرسل *قائمة* للقائمة الرئيسية\n");
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -808,27 +739,15 @@ namespace crud_app_backend.Bot.Services
                     "একজন এজেন্ট শীঘ্রই যোগাযোগ করবে।\n\n" +
                     "👉 *মেনু* — মূল মেনু",
 
-                    "✅ *கோரிக்கை அனுப்பப்பட்டது*\n\n" +
-                    (result.TicketId != null ? $"டிக்கெட் ஐடி : *{result.TicketId}*\n\n" : "") +
-                    "ஒரு முகவர் விரைவில் தொடர்பு கொள்வார்.\n\n" +
-                    "👉 *மெனு* — முகப்பு மெனு",
-
-                    "✅ *客服请求已提交*\n\n" +
-                    (result.TicketId != null ? $"工单 ID：*{result.TicketId}*\n\n" : "") +
-                    "客服人员将尽快联系您。\n\n" +
-                    "👉 *menu* — 主菜单",
-
-                    "✅ *Permintaan Ejen Dihantar*\n\n" +
-                    (result.TicketId != null ? $"ID Tiket : *{result.TicketId}*\n\n" : "") +
-                    "Seorang ejen sokongan akan menghubungi anda tidak lama lagi.\n\n" +
-                    "👉 Hantar *menu* untuk Menu Utama")
+                    "✅ *تم إرسال طلب الوكيل*\n\n" +
+                    (result.TicketId != null ? $"رقم التذكرة : *{result.TicketId}*\n\n" : "") +
+                    "سيتواصل معك أحد وكلاء الدعم قريبًا.\n\n" +
+                    "👉 أرسل *قائمة* للقائمة الرئيسية")
 
                 : s.T(
                     $"❌ Request failed.\n{result.Error}\n\nSend *S* to retry.",
                     $"❌ ব্যর্থ।\n{result.Error}",
-                    $"❌ தோல்வி.\n{result.Error}",
-                    $"❌ 请求失败。\n{result.Error}",
-                    $"❌ Permintaan gagal.\n{result.Error}\n\nHantar *S* untuk cuba semula.");
+                    $"❌ فشل الطلب.\n{result.Error}\n\nأرسل *S* للمحاولة مرة أخرى.");
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -847,14 +766,12 @@ namespace crud_app_backend.Bot.Services
             "Please choose your language:\n\n" +
             "1️⃣  English\n" +
             "2️⃣  বাংলা\n" +
-            "3️⃣  தமிழ்\n" +
-            "4️⃣  中文\n" +
-            "5️⃣  Bahasa Melayu\n\n" +
-            "👉 Reply *1*, *2*, *3*, *4* or *5*.";
+            "3️⃣  العربية\n\n" +
+            "👉 Reply *1*, *2* or *3*.";
 
         /// <summary>Full language prompt shown after shop verification (valid or invalid code).</summary>
         private static string LangPrompt() =>
-            "👋 Hi! I'm *PRAN-RFL Malaysia Sales Support*\n\n" +
+            "👋 Hi! I'm *PRAN-RFL KSA Sales Support*\n\n" +
             LangOptions();
 
         // ─────────────────────────────────────────────────────────────────────
@@ -868,19 +785,19 @@ namespace crud_app_backend.Bot.Services
         {
             if (string.IsNullOrWhiteSpace(mediaId))
             {
-                _logger.LogWarning("[UAE] SaveMedia skipped — empty mediaId msgId={Id}", messageId);
+                _logger.LogWarning("[KSA] SaveMedia skipped — empty mediaId msgId={Id}", messageId);
                 return null;
             }
             if (string.IsNullOrWhiteSpace(_env.WebRootPath))
             {
-                _logger.LogError("[UAE] SaveMedia failed — WebRootPath is null or empty");
+                _logger.LogError("[KSA] SaveMedia failed — WebRootPath is null or empty");
                 return null;
             }
             try
             {
-                _logger.LogInformation("[UAE] Downloading media mediaId={Id} type={T}", mediaId, subFolder);
+                _logger.LogInformation("[KSA] Downloading media mediaId={Id} type={T}", mediaId, subFolder);
                 var (bytes, mime) = await _dialog.DownloadMediaAsync(mediaId, mimeType);
-                _logger.LogInformation("[UAE] Downloaded {B} bytes mime={M}", bytes.Length, mime);
+                _logger.LogInformation("[KSA] Downloaded {B} bytes mime={M}", bytes.Length, mime);
 
                 var ext = MimeToExt(mime, subFolder == "audio" ? ".ogg" : ".jpg");
                 var fileName = $"{messageId}{ext}";
@@ -888,7 +805,7 @@ namespace crud_app_backend.Bot.Services
                 Directory.CreateDirectory(folder);
                 var filePath = Path.Combine(folder, fileName);
                 await File.WriteAllBytesAsync(filePath, bytes);
-                _logger.LogInformation("[UAE] Saved to {Path}", filePath);
+                _logger.LogInformation("[KSA] Saved to {Path}", filePath);
 
                 var baseUrl = _config["App:BaseUrl"] ?? "https://webhook.prangroup.com";
                 var fileUrl = $"{baseUrl}/wa-media/{subFolder}/{fileName}";
@@ -913,28 +830,28 @@ namespace crud_app_backend.Bot.Services
                     dbEx.Message.Contains("duplicate", StringComparison.OrdinalIgnoreCase) ||
                     dbEx.Message.Contains("UNIQUE", StringComparison.OrdinalIgnoreCase))
                 {
-                    _logger.LogDebug("[UAE] Media duplicate skipped: {Id}", messageId);
+                    _logger.LogDebug("[KSA] Media duplicate skipped: {Id}", messageId);
                 }
                 catch (Exception dbEx)
                 {
-                    _logger.LogWarning(dbEx, "[UAE] Media DB insert failed (file saved OK): {Id}", messageId);
+                    _logger.LogWarning(dbEx, "[KSA] Media DB insert failed (file saved OK): {Id}", messageId);
                 }
 
                 return filePath;
             }
             catch (HttpRequestException httpEx)
             {
-                _logger.LogError(httpEx, "[UAE] 360dialog download failed mediaId={Id}: {Msg}", mediaId, httpEx.Message);
+                _logger.LogError(httpEx, "[KSA] 360dialog download failed mediaId={Id}: {Msg}", mediaId, httpEx.Message);
                 return null;
             }
             catch (IOException ioEx)
             {
-                _logger.LogError(ioEx, "[UAE] Disk write failed wa-media/{Sub}: {Msg}", subFolder, ioEx.Message);
+                _logger.LogError(ioEx, "[KSA] Disk write failed wa-media/{Sub}: {Msg}", subFolder, ioEx.Message);
                 return null;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[UAE] SaveMedia failed msgId={Id} mediaId={MId}", messageId, mediaId);
+                _logger.LogError(ex, "[KSA] SaveMedia failed msgId={Id} mediaId={MId}", messageId, mediaId);
                 return null;
             }
         }
@@ -972,12 +889,12 @@ namespace crud_app_backend.Bot.Services
                     TempData = s.Save(),
                     RawMessage = rawText,
                 });
-                _logger.LogInformation("[UAE] PersistSession OK phone={Phone} step={Step}", s.Phone, s.State);
+                _logger.LogInformation("[KSA] PersistSession OK phone={Phone} step={Step}", s.Phone, s.State);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex,
-                    "[UAE] PersistSession FAILED phone={Phone} step={Step} error={Msg} inner={Inner}",
+                    "[KSA] PersistSession FAILED phone={Phone} step={Step} error={Msg} inner={Inner}",
                     s.Phone, s.State, ex.Message, ex.InnerException?.Message ?? "none");
             }
         }
@@ -1011,9 +928,7 @@ namespace crud_app_backend.Bot.Services
             s.T(
                 "❌ *Invalid input.*\n\n👉 Send *menu* to go to Main Menu.",
                 "❌ *অবৈধ ইনপুট।*\n\n👉 *menu* পাঠান।",
-                "❌ *தவறான உள்ளீடு.*\n\n👉 *menu* அனுப்பவும்.",
-                "❌ *无效输入。*\n\n👉 发送 *menu* 返回主菜单。",
-                "❌ *Input tidak sah.*\n\n👉 Hantar *menu* untuk pergi ke Menu Utama.");
+                "❌ *إدخال غير صالح.*\n\n👉 أرسل *قائمة* للذهاب إلى القائمة الرئيسية.");
 
         private static string MimeToExt(string mime, string fallback) => mime switch
         {

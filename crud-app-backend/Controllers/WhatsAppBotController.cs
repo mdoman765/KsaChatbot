@@ -5,9 +5,9 @@ using Microsoft.AspNetCore.Mvc;
 namespace crud_app_backend.Bot.Controllers
 {
     /// <summary>
-    /// Receives 360dialog webhook POST requests.
+    /// Receives Meta WhatsApp Cloud API webhook requests.
     ///
-    /// IMPORTANT: 360dialog requires a response within 80ms.
+    /// IMPORTANT: fast response required for the POST endpoint.
     /// This controller does ONE thing — write body to WebhookQueue — and
     /// returns 200 OK immediately. No DB calls, no HTTP calls, no processing.
     /// WebhookProcessorService handles all actual processing in the background.
@@ -17,18 +17,47 @@ namespace crud_app_backend.Bot.Controllers
     public class WhatsAppBotController : ControllerBase
     {
         private readonly WebhookQueue _queue;
+        private readonly IConfiguration _config;
         private readonly ILogger<WhatsAppBotController> _logger;
 
         public WhatsAppBotController(
             WebhookQueue queue,
+            IConfiguration config,
             ILogger<WhatsAppBotController> logger)
         {
             _queue = queue;
+            _config = config;
             _logger = logger;
         }
 
         /// <summary>
-        /// 360dialog calls this on every incoming WhatsApp message.
+        /// Meta's one-time webhook verification handshake. Called when you register/
+        /// change the callback URL in Meta App Dashboard → WhatsApp → Configuration.
+        /// 360dialog previously handled this on your behalf — connecting directly to
+        /// Meta requires this endpoint to exist and echo back hub.challenge.
+        /// </summary>
+        [HttpGet("whatsapp-webhook")]
+        public IActionResult VerifyWebhook(
+            [FromQuery(Name = "hub.mode")] string? hubMode,
+            [FromQuery(Name = "hub.verify_token")] string? hubVerifyToken,
+            [FromQuery(Name = "hub.challenge")] string? hubChallenge)
+        {
+            var expectedToken = _config["Meta:VerifyToken"];
+
+            if (hubMode == "subscribe" &&
+                !string.IsNullOrEmpty(expectedToken) &&
+                hubVerifyToken == expectedToken)
+            {
+                _logger.LogInformation("[Webhook] Verification succeeded");
+                return Content(hubChallenge ?? "", "text/plain");
+            }
+
+            _logger.LogWarning("[Webhook] Verification FAILED — token mismatch");
+            return Forbid();
+        }
+
+        /// <summary>
+        /// Meta calls this on every incoming WhatsApp message.
         /// Returns 200 in &lt; 1ms. All processing is done by WebhookProcessorService.
         /// </summary>
         [HttpPost("whatsapp-webhook")]
@@ -42,11 +71,11 @@ namespace crud_app_backend.Bot.Controllers
                 _logger.LogWarning("[Webhook] Queue full — message dropped");
             }
 
-            // 200 OK back to 360dialog in < 1ms
+            // 200 OK back to Meta in < 1ms
             return Ok(new { status = "received" });
         }
 
-        /// <summary>Health check — 360dialog or monitoring can ping this.</summary>
+        /// <summary>Health check — monitoring can ping this.</summary>
         [HttpGet("health")]
         public IActionResult Health() => Ok(new { status = "ok", time = DateTime.UtcNow });
     }

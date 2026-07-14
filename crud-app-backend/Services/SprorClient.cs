@@ -3,11 +3,11 @@ using System.Text.Json;
 namespace crud_app_backend.Bot.Services
 {
     /// <summary>
-    /// Wraps all spror.prgfms.com API calls used by the UAE bot.
+    /// Wraps all spror.prgfms.com API calls used by the KSA bot.
     /// </summary>
     public class SprorClient : ISprorClient
     {
-        private const string ContName = "Malaysia";
+        private const string ContName = "Saudi Arabia";
 
         private readonly IHttpClientFactory _factory;
         private readonly ILogger<SprorClient> _logger;

@@ -65,7 +65,8 @@ namespace crud_app_backend.Services
                 int warmed = 0;
                 foreach (var row in sessions)
                 {
-                    // UAE bot uses "uae:{phone}" cache key
+                    //
+                    // bot uses "uae:{phone}" cache key
                     var cacheKey = $"uae:{row.Phone}";
 
                     if (!cache.TryGetValue(cacheKey, out _))
