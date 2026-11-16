@@ -101,8 +101,10 @@ namespace crud_app_backend.Bot.Services
 
         private string? GetAckMessage(UaeSession s, UaeIncomingMessage msg)
         {
-            if (s.State == "AWAITING_SHOP_CODE" && msg.MsgType == "text"
-                && !ResetKeywords.Contains(msg.RawText))
+            // A valid-format QR code (2 letters + 4 digits) always triggers a
+            // live shop-validation call, regardless of the user's current
+            // state — mirrors the mandatory QR gate in RouteAsync.
+            if (msg.MsgType == "text" && ExtractQrCode(msg.RawTextOriginal) != null)
                 return s.T(
                     "🔍 Verifying shop...",
                     "🔍 শপ যাচাই করা হচ্ছে...",
@@ -174,22 +176,43 @@ namespace crud_app_backend.Bot.Services
             if (msg.MsgType == "order" && msg.CartItems.Count > 0)
                 return await HandleCartOrderAsync(s, msg);
 
-            // ── INIT or reset keywords ────────────────────────────────────────
+            // ── MANDATORY QR GATE ────────────────────────────────────────────
+            // A message matching the required QR format (2 letters + 4 digits,
+            // e.g. "AB1234") is intercepted here, first, before anything else
+            // in the router — whether it's the user's very first message or
+            // arrives mid-flow in some other state. It always (re-)validates
+            // the shop and is the ONLY place shop validation happens; no other
+            // branch below performs shop validation. This is what guarantees a
+            // QR code received during an existing flow immediately redirects
+            // into (re-)validation instead of being treated as a normal
+            // message for whatever step the user was on.
+            if (msg.MsgType == "text" && ExtractQrCode(msg.RawTextOriginal) is { } qrCandidate)
+                return await HandleQrValidationAsync(s, qrCandidate);
+
+            // ── INIT or reset keywords: start over at the mandatory QR gate ────
             if (s.State == "INIT" || (msg.MsgType == "text" && ResetKeywords.Contains(raw)))
             {
                 ResetSession(s);
                 Transition(s, "AWAITING_SHOP_CODE");
-                return await HandleShopCodeAsync(s, msg);
+                return await HandleShopGateAsync(s, msg);
             }
+
+            // ── Mandatory gate: until the shop has been verified via a QR
+            //    code, no other state/step in the flow is reachable. Anything
+            //    that isn't a valid-format QR code (handled above) keeps the
+            //    user here and re-prompts for one. ─────────────────────────
+            if (s.State == "AWAITING_SHOP_CODE")
+                return await HandleShopGateAsync(s, msg);
 
             // ── menu keyword ──────────────────────────────────────────────────
             if (msg.MsgType == "text" && MenuKeywords.Contains(raw)
-                && s.State != "AWAITING_SHOP_CODE" && s.State != "AWAITING_LANG")
+                && s.State != "AWAITING_LANG")
                 return BuildMainMenu(s);
 
             // ── "0" shortcut: change language (available after shop/lang steps) ──
+            // (AWAITING_SHOP_CODE is already handled above, before we get here.)
             if (msg.MsgType == "text" && raw == "0"
-                && s.State != "AWAITING_SHOP_CODE" && s.State != "AWAITING_LANG"
+                && s.State != "AWAITING_LANG"
                 && s.State != "AWAITING_RETURN_DETAILS" && s.State != "AWAITING_COMPLAINT_DETAILS"
                 && s.State != "AWAITING_RETURN_CONFIRM" && s.State != "AWAITING_COMPLAINT_CONFIRM")
             {
@@ -204,7 +227,10 @@ namespace crud_app_backend.Bot.Services
             return s.State switch
             {
                 "AWAITING_LANG" => await HandleLangAsync(s, msg),
-                "AWAITING_SHOP_CODE" => await HandleShopCodeAsync(s, msg),
+                // AWAITING_SHOP_CODE never reaches here — the mandatory gate
+                // above always intercepts it — but is kept as a defensive
+                // fallback so this switch can't silently skip the gate.
+                "AWAITING_SHOP_CODE" => await HandleShopGateAsync(s, msg),
                 "MAIN_MENU" => await HandleMainMenu(s, msg),
                 "AWAITING_RETURN_DETAILS" => await HandleMediaDetailsAsync(s, msg, "return"),
                 "AWAITING_RETURN_CONFIRM" => await HandleReturnConfirmAsync(s, msg),
@@ -243,88 +269,78 @@ namespace crud_app_backend.Bot.Services
         // SHOP AUTHENTICATION
         // ─────────────────────────────────────────────────────────────────────
 
-        private async Task<string> HandleShopCodeAsync(UaeSession s, UaeIncomingMessage msg)
+        /// <summary>
+        /// The single entry point for shop (re-)validation via QR code.
+        /// Called from RouteAsync whenever an incoming text matches the
+        /// mandatory QR format — whether that's the user's very first
+        /// message, a retry from inside the QR gate, or a QR sent mid-flow
+        /// while the user was somewhere else entirely. On success the shop
+        /// is (re-)verified and the flow continues to the same "next step"
+        /// the existing chatbot logic has always used after shop
+        /// verification (the language prompt). On failure the user is kept
+        /// in (or returned to) the mandatory QR gate — they can never land
+        /// on any other step without a successful QR validation.
+        /// </summary>
+        private async Task<string> HandleQrValidationAsync(UaeSession s, string qrCode)
+        {
+            var baseUrl = _config["App:BaseUrl"]?.TrimEnd('/') ?? "https://webhook.prangroup.com";
+            var logoUrl = $"{baseUrl}/images/pran-rfl-logo.jpg";
+
+            var qr = await CheckQrCodeAsync(qrCode);
+            s.QrCode = qrCode;
+
+            if (qr != null)
+            {
+                s.ShopVerified = true;
+                s.ShopCode = qr.Value.SiteCode;
+                s.ShopName = qr.Value.SiteName;
+
+                Transition(s, "AWAITING_LANG");
+                var qrValidMsg = $"✅ *Hi, {qr.Value.SiteName}!* Shop Verified.\n\n" + LangPrompt();
+                await _dialog.SendImageAsync(s.Phone, logoUrl, qrValidMsg);
+                return string.Empty;
+            }
+
+            // Invalid / unrecognised QR code — shop validation failed, so the
+            // user is kept in (or sent back to) the mandatory QR gate rather
+            // than being allowed to advance to any other step.
+            s.ShopVerified = false;
+            // ShopCode intentionally left unset — the scanned QR code is
+            // NOT a shop code, and no site_code exists when the check fails.
+            Transition(s, "AWAITING_SHOP_CODE");
+            await _dialog.SendImageAsync(s.Phone, logoUrl, QrGatePrompt());
+            return string.Empty;
+        }
+
+        /// <summary>
+        /// Handles every message received while the user is in the mandatory
+        /// QR gate (state == AWAITING_SHOP_CODE) that is NOT itself a
+        /// valid-format QR code — that case is always intercepted earlier in
+        /// RouteAsync via HandleQrValidationAsync before this is reached.
+        /// Anything else (plain text, images, audio, ...) simply re-prompts
+        /// for a valid QR code; the user cannot proceed past this state.
+        /// </summary>
+        private async Task<string> HandleShopGateAsync(UaeSession s, UaeIncomingMessage msg)
         {
             if (msg.MsgType != "text" || string.IsNullOrWhiteSpace(msg.RawText))
                 return string.Empty;
 
             var baseUrl = _config["App:BaseUrl"]?.TrimEnd('/') ?? "https://webhook.prangroup.com";
             var logoUrl = $"{baseUrl}/images/pran-rfl-logo.jpg";
-
-            // ── Bare 6-character QR code (e.g. "2YU9Y7") — scanned via QR ──────
-            var qrCode = ExtractQrCode(msg.RawTextOriginal);
-            if (qrCode != null)
-            {
-                var qr = await CheckQrCodeAsync(qrCode);
-                s.QrCode = qrCode;
-
-                if (qr != null)
-                {
-                    s.ShopVerified = true;
-                    s.ShopCode = qr.Value.SiteCode;
-                    s.ShopName = qr.Value.SiteName;
-
-                    Transition(s, "AWAITING_LANG");
-                    var qrValidMsg = $"✅ *Hi, {qr.Value.SiteName}!* Shop Verified.\n\n" + LangPrompt();
-                    await _dialog.SendImageAsync(msg.From, logoUrl, qrValidMsg);
-                    return string.Empty;
-                }
-
-                s.ShopVerified = false;
-                // ShopCode intentionally left unset — the scanned QR code is
-                // NOT a shop code, and no site_code exists when the check fails.
-                Transition(s, "AWAITING_LANG");
-                var qrInvalidMsg = $"❌ *QR Code not recognised.* Please try again.\n\n" + LangPrompt();
-                await _dialog.SendImageAsync(msg.From, logoUrl, qrInvalidMsg);
-                return string.Empty;
-            }
-
-            var code = msg.RawText.Trim();
-
-            // ── If the text is a greeting/reset keyword, skip validation entirely ──
-            if (ResetKeywords.Contains(code))
-            {
-                s.ShopVerified = false;
-                s.ShopCode = string.Empty;
-                Transition(s, "AWAITING_LANG");
-                var greetMsg = "👋 Hi! Welcome to *PRAN-RFL KSA Sales Support*\n\n" +
-                               LangOptions();
-                await _dialog.SendImageAsync(msg.From, logoUrl, greetMsg);
-                return string.Empty;
-            }
-
-            // ── Normal path: treat input as a shop code and validate ──────────
-            var shop = await ValidateShopAsync(code);
-
-            if (shop == null)
-            {
-                s.ShopVerified = false;
-                s.ShopCode = code;
-                Transition(s, "AWAITING_LANG");
-                var invalidMsg = $"❌ *Shop Code not found.* *{code}* is not recognised.\n\n" + LangPrompt();
-                await _dialog.SendImageAsync(msg.From, logoUrl, invalidMsg);
-                return string.Empty;
-            }
-
-            s.ShopVerified = true;
-            s.ShopCode = code;
-            s.ShopUserId = shop.Value.Id;
-
-            var ownerTitleCase = System.Globalization.CultureInfo.InvariantCulture
-                .TextInfo.ToTitleCase((shop.Value.OwnerName ?? "").ToLowerInvariant()).Trim();
-            s.ShopName = string.IsNullOrWhiteSpace(ownerTitleCase)
-                ? shop.Value.SiteName
-                : $"{ownerTitleCase} | {shop.Value.SiteName}";
-
-            Transition(s, "AWAITING_LANG");
-            var displayOwner = ExtractOwnerFromShopName(s.ShopName);
-            var welcomePrefix = string.IsNullOrWhiteSpace(displayOwner)
-                ? "✅ *Shop Verified!*"
-                : $"✅ *Hi, {displayOwner}!* Shop Verified.";
-            var validMsg = $"{welcomePrefix}\n\n" + LangPrompt();
-            await _dialog.SendImageAsync(msg.From, logoUrl, validMsg);
+            await _dialog.SendImageAsync(s.Phone, logoUrl, QrGatePrompt());
             return string.Empty;
         }
+
+        /// <summary>Trilingual prompt asking for a valid QR code — shown both
+        /// on first contact and on every retry inside the mandatory gate.</summary>
+        private static string QrGatePrompt() =>
+            "👋 Hi! Welcome to *PRAN-RFL KSA Sales Support*\n\n" +
+            "📷 *Please provide a valid QR code to continue.*\n" +
+            "Format: 2 letters followed by 4 digits (e.g. *AB1234*).\n\n" +
+            "📷 *يرجى تقديم رمز QR صالح للمتابعة.*\n" +
+            "التنسيق: حرفان يليهما 4 أرقام (مثل *AB1234*).\n\n" +
+            "📷 *চালিয়ে যেতে একটি বৈধ QR কোড দিন।*\n" +
+            "ফরম্যাট: ২টি অক্ষরের পর ৪টি সংখ্যা (যেমন *AB1234*)।";
 
         private static string ExtractOwnerFromShopName(string? shopName)
         {
@@ -334,16 +350,22 @@ namespace crud_app_backend.Bot.Services
         }
 
         /// <summary>
-        /// Detects a bare 6-character alphanumeric QR code (e.g. "2YU9Y7"),
-        /// distinct from a plain shop code. Uppercased since the QR-check
-        /// API expects/returns uppercase codes.
+        /// Regex for the mandatory QR code format: exactly 6 characters — 2
+        /// letters followed by 4 digits (e.g. "AB1234").
+        /// </summary>
+        private static readonly System.Text.RegularExpressions.Regex QrCodeRegex =
+            new(@"^[A-Za-z]{2}\d{4}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        /// <summary>
+        /// Detects a valid QR code — exactly 6 characters, 2 letters followed
+        /// by 4 digits (e.g. "AB1234"). Uppercased since the QR-check API
+        /// expects/returns uppercase codes. Returns null for anything else,
+        /// including the old free-form shop-code format or plain text.
         /// </summary>
         private static string? ExtractQrCode(string rawTextOriginal)
         {
             var trimmed = (rawTextOriginal ?? "").Trim();
-            return System.Text.RegularExpressions.Regex.IsMatch(trimmed, @"^[A-Za-z0-9]{6}$")
-                ? trimmed.ToUpperInvariant()
-                : null;
+            return QrCodeRegex.IsMatch(trimmed) ? trimmed.ToUpperInvariant() : null;
         }
 
         /// <summary>
@@ -410,6 +432,13 @@ namespace crud_app_backend.Bot.Services
             }
         }
 
+        /// <summary>
+        /// Validates a free-form shop code (as opposed to a scanned QR code)
+        /// against POST /retail/shopDetails. Retained for potential reuse,
+        /// but no longer wired into the router: shop verification is now
+        /// exclusively performed via the mandatory QR gate
+        /// (see HandleQrValidationAsync), per the QR-only validation flow.
+        /// </summary>
         private async Task<(string SiteName, string Id, string OwnerName)?> ValidateShopAsync(string shopCode)
         {
             try
